@@ -37,7 +37,8 @@ from auth import (
     SECRET_KEY, ALGORITHM
 )
 from payment_service import payment_service
-from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionResponse, CheckoutStatusResponse, CheckoutSessionRequest
+# Stripe integration - using stripe library directly
+import stripe
 from push_notification_service import PushNotificationService
 from background_scheduler import EventReminderScheduler
 from notification_endpoints import notification_router, create_notification_helper
