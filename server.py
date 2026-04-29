@@ -149,13 +149,28 @@ async def lifespan(app: FastAPI):
     
     # Push notification service'e db referansı ver
     push_service.set_db(db)
-    
+
     logger.info("✅ Database references set for all modules")
-    
+
+    # Scheduler'ı db hazır olduktan sonra başlat
+    # (Eski kod: modül seviyesinde db=None ile oluşturuluyordu → MongoDB fatal write hatası)
+    global scheduler
+    scheduler = EventReminderScheduler(db, push_service)
+    scheduler.start()
+    logger.info("✅ Background scheduler started")
+
+    # Reminder scheduler başlat
+    from reminder_scheduler import start_reminder_scheduler
+    start_reminder_scheduler(db)
+    logger.info("✅ Reminder scheduler started")
+
     yield
-    
+
     # Shutdown
     logger.info("🛑 Shutting down application...")
+    if scheduler:
+        scheduler.stop()
+        logger.info("✅ Scheduler stopped")
     if client:
         client.close()
         logger.info("✅ MongoDB connection closed")
@@ -10131,7 +10146,8 @@ app.include_router(management_router, prefix="/api", tags=["management"])
 app.include_router(expense_router, prefix="/api", tags=["expenses"])
 
 # Event Management endpoints
-set_event_management_db(db)
+# Not: set_event_management_db(db) lifespan içinde çağrılıyor (burada db=None olur)
+# Eski kod: set_event_management_db(db)
 app.include_router(event_management_router, prefix="/api", tags=["event-management"])
 
 # League Management endpoints
@@ -10437,27 +10453,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize scheduler
-scheduler = EventReminderScheduler(db, push_service)
+# Scheduler global referans (lifespan içinde initialize edilir)
+scheduler = None
 
-@app.on_event("startup")
-async def startup_event():
-    """Start the background scheduler on app startup"""
-    scheduler.start()
-    
-    # Start reminder scheduler
-    from reminder_scheduler import start_reminder_scheduler
-    start_reminder_scheduler(db)
-    
-    # Re-set database references for all modules (ensures they work after hot reload)
-    set_event_management_db(db)
-    set_league_db(db)
-
-    logging.info("Application started with background scheduler")
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    """Stop scheduler and close DB on shutdown"""
-    scheduler.stop()
-    client.close()
-    logging.info("Application shutdown complete")
+# ────────────────────────────────────────────────────────────────────
+# ESKİ KOD (geri dönüş için saklanıyor):
+# on_event("startup/shutdown") + modül seviyesinde scheduler init
+# Sorun: db=None ile scheduler oluşturuluyordu → MongoDB fatal write
+# Sorun: lifespan varken on_event çalışmıyor (FastAPI kısıtlaması)
+# ────────────────────────────────────────────────────────────────────
+# scheduler = EventReminderScheduler(db, push_service)
+#
+# @app.on_event("startup")
+# async def startup_event():
+#     """Start the background scheduler on app startup"""
+#     scheduler.start()
+#     from reminder_scheduler import start_reminder_scheduler
+#     start_reminder_scheduler(db)
+#     set_event_management_db(db)
+#     set_league_db(db)
+#     logging.info("Application started with background scheduler")
+#
+# @app.on_event("shutdown")
+# async def shutdown_db_client():
+#     """Stop scheduler and close DB on shutdown"""
+#     scheduler.stop()
+#     client.close()
+#     logging.info("Application shutdown complete")
+# ────────────────────────────────────────────────────────────────────
